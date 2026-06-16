@@ -1,255 +1,115 @@
+# SfM + Visual Hull — 3D-реконструкция объекта из видео
 
-# 📦 Blue Box 3D Reconstruction (SfM + Visual Hull)
+Пайплайн для построения **полноценной цветной 3D-модели** реального объекта из обычного видео (снятого, например, на iPhone). Реализованы два подхода: быстрый SfM-точечный облак прямо из OpenCV и плотный визуальный корпус (visual hull) через COLMAP + space carving + Marching Cubes.
 
-Проект для восстановления **3D-модели синей коробки** из видео или набора кадров.
-Используются методы **Structure-from-Motion (SfM)**, **маски по цвету** и **Visual Hull (space carving)**.
-
-Подходит для тестирования на **разных устройствах**, с **разными видео**, без жёсткой привязки к одному окружению.
+Результат — `.ply`-файл с текстурированным мешем, который открывается в любом 3D-редакторе (MeshLab, Blender, Open3D).
 
 ---
 
-## 🧠 Идея пайплайна
+## Как работает пайплайн
 
-1. 🎥 Видео → кадры
-2. 🔵 Построение масок синей коробки
-3. 📷 SfM (через COLMAP) — восстановление камер
-4. 🧊 Visual Hull — воксельное пересечение силуэтов
-5. 🧱 Mesh + сглаживание + окраска
-6. 👀 Просмотр результата в Open3D
+| Шаг | Инструмент | Что происходит |
+|---|---|---|
+| 1. Видео → кадры | OpenCV `VideoCapture` | извлечение кадров с заданным шагом |
+| 2. Маски объекта | OpenCV HSV + морфология | бинарные силуэты объекта |
+| 3. Восстановление камер | **COLMAP (SfM)** | нахождение поз всех камер и sparse point cloud |
+| 4. Space carving | NumPy (реализация вручную) | воксельная сетка 640³, пересечение силуэтов из всех камер |
+| 5. Извлечение меша | **Marching Cubes** (scikit-image) | iso-surface из воксельного occupancy grid |
+| 6. Постобработка | **Open3D** | сглаживание Таубина, удаление дегенеративных граней, non-manifold рёбер |
+| 7. Раскраска вершин | проекция по камерам | усреднение цвета по N ближайшим видам |
+| 8. Просмотр | Open3D Visualizer | интерактивный 3D-вьювер |
 
 ---
 
-## 📁 Структура проекта
+## Структура репозитория
 
-```text
-Box_project_minor/
-│
-├── main_box.py                 # Быстрый SfM + point cloud из видео
-├── make_masks_box.py           # Генерация бинарных масок коробки
-├── visual_hull_from_masks.py   # Построение плотной 3D-модели (Visual Hull)
-│
-├── frames/                     # Кадры из видео (JPEG)
-├── masks/                      # Маски коробки (PNG/JPEG)
-│
-├── colmap_images/
-│   └── images/                 # Undistorted изображения из COLMAP
-│
-├── colmap_text/                # cameras.txt / images.txt / points3D.txt
-│
-├── output/
-│   ├── box_sfm_color.ply
-│   └── box_visual_hull.ply
-│
-└── README.md
+```
+sfm-visual-hull-3d/
+├── main_box.py                   — быстрый SfM: SIFT/ORB → триангуляция → sparse point cloud
+├── make_masks_box.py             — генерация бинарных масок по HSV-цвету + морфологическое сглаживание
+├── visual_hull_from_masks.py     — основной скрипт: space carving → Marching Cubes → окрашенный mesh
+└── colmap_images/
+    ├── run-colmap-geometric.sh   — dense reconstruction (geometric consistency)
+    └── run-colmap-photometric.sh — dense reconstruction (photometric)
+```
+
+Рантайм-папки (не в репозитории, создаются при запуске):
+
+```
+frames/               — кадры из видео
+masks/                — бинарные маски объекта
+colmap_text/          — cameras.txt / images.txt / points3D.txt
+colmap_images/images/ — undistorted кадры из COLMAP
+output/               — box_sfm_color.ply, box_visual_hull.ply
 ```
 
 ---
 
-## ⚙️ Требования
-
-### Python
-
-Рекомендуется **Python 3.9–3.11**
-
-### Библиотеки
+## Требования
 
 ```bash
 pip install numpy opencv-python open3d scikit-image
 ```
 
-Если используешь ORB вместо SIFT — дополнительных шагов не требуется.
+- Python 3.9–3.11
+- [COLMAP](https://colmap.github.io/) (обязательно для `visual_hull_from_masks.py`)
 
 ---
 
-## 🎥 Работа с другим видео
+## Запуск
 
-### 1️⃣ Подготовь видео
+### 1. Маски объекта
 
-Положи видео в корень проекта или укажи путь:
-
-```python
-VIDEO_PATH = "my_video.mp4"
-```
-
-Поддерживаются:
-
-* `.mp4`
-* `.mov`
-* `.avi`
-
----
-
-### 2️⃣ Запуск `main_box.py` (опционально)
-
-```bash
-python main_box.py
-```
-
-Что делает:
-
-* читает видео
-* ищет фичи (SIFT / ORB)
-* триангулирует точки
-* сохраняет облако точек:
-
-```text
-output/box_sfm_color.ply
-```
-
-> ⚠️ Этот шаг **не обязателен**, если используешь COLMAP отдельно.
-
----
-
-## 📷 COLMAP (обязательно для Visual Hull)
-
-Для корректной работы `visual_hull_from_masks.py` требуется результат COLMAP:
-
-```text
-colmap_text/
- ├── cameras.txt
- ├── images.txt
- └── points3D.txt
-```
-
-А также undistorted изображения:
-
-```text
-colmap_images/images/
-```
-
-Рекомендуемые шаги в COLMAP:
-
-1. Feature Extraction
-2. Feature Matching
-3. Sparse Reconstruction
-4. Image Undistortion
-5. Export model as **TXT**
-
----
-
-## 🔵 Генерация масок коробки
-
-Перед запуском:
-
-```text
-frames/
- ├── frame_0001.jpg
- ├── frame_0002.jpg
- └── ...
-```
-
-Запуск:
+Положи кадры в `frames/`, запусти:
 
 ```bash
 python make_masks_box.py
 ```
 
-Результат:
+### 2. SfM через COLMAP
 
-```text
-masks/
- ├── frame_0001.jpg
- ├── frame_0002.jpg
- └── ...
+1. Feature Extraction → Feature Matching → Sparse Reconstruction
+2. Image Undistortion → Export model as TXT
+3. Результат: `colmap_text/cameras.txt`, `images.txt`, `points3D.txt`
+
+### 3. Быстрый SfM (опционально, без COLMAP)
+
+```bash
+python main_box.py   # VIDEO_PATH = "my_video.mp4" в начале скрипта
 ```
 
-Маски строятся:
+Выход: `output/box_sfm_color.ply`
 
-* по HSV-цвету (синий)
-* с заливкой контуров
-* морфологическим сглаживанием
-
----
-
-## 🧊 Построение 3D-модели (Visual Hull)
+### 4. Visual Hull (основной сценарий)
 
 ```bash
 python visual_hull_from_masks.py
 ```
 
-Скрипт:
-
-* читает камеры COLMAP
-* строит воксельную сетку
-* выполняет **space carving**
-* применяет **Marching Cubes**
-* сглаживает mesh
-* окрашивает вершины по кадрам
-
-Результат:
-
-```text
-output/box_visual_hull.ply
-```
+Выход: `output/box_visual_hull.ply` — открывается автоматически в Open3D.
 
 ---
 
-## 👀 Просмотр результата
-
-Открывается автоматически в окне Open3D
-или вручную:
-
-```bash
-open3d output/box_visual_hull.ply
-```
-
----
-
-## 🛠 Полезные параметры
-
-### `visual_hull_from_masks.py`
+## Ключевые параметры
 
 ```python
-VOX_RES = 640          # качество модели (256–640)
-MIN_VIEWS = 3          # сколько камер должны видеть воксель
-SMOOTH_ITERS = 5       # сглаживание
-PAD_SCALE = 0.15       # запас вокруг объекта
-```
+# visual_hull_from_masks.py
+VOX_RES      = 640   # разрешение воксельной сетки (выше → точнее, медленнее)
+MIN_VIEWS    = 3     # минимум камер, чтобы воксель считался занятым
+SMOOTH_ITERS = 5     # итерации сглаживания меша
 
-### `main_box.py`
-
-```python
-FRAME_STRIDE = 2       # пропуск кадров
-DOWNSCALE = 0.6        # ускорение
-FOV_DEG = 70.0         # угол обзора камеры
+# main_box.py
+FRAME_STRIDE = 1     # шаг извлечения кадров (1 = каждый кадр)
+DOWNSCALE    = 0.6   # уменьшение разрешения для ускорения
+FOV_DEG      = 70.0  # угол обзора (iPhone ≈ 70°)
 ```
 
 ---
 
-## ⚠️ Частые проблемы
+## Стек
 
-**Модель пустая**
-
-* плохие маски
-* несовпадение имён файлов
-* мало камер в COLMAP
-
-**Куб слишком грубый**
-
-* увеличь `VOX_RES`
-* добавь кадров
-
-**Цвета серые**
-
-* объект не попадает в маски
-* увеличь `MAX_COLOR_VIEWS`
-
----
-
-## 🚀 Для чего подходит
-
-* Computer Vision / CV-проекты
-* 3D-реконструкция объектов
-* Исследование SfM + Visual Hull
-* Прототипы для Digital Twin / BIM
-
----
-
-Если хочешь, дальше могу:
-
-* ✨ упростить пайплайн
-* 📦 сделать Docker
-* 📄 добавить схему архитектуры
-* 🎯 адаптировать под **любой цвет / объект**
-
-Просто скажи 👍
+- **Python**, **NumPy**
+- **OpenCV** — извлечение кадров, SIFT/ORB, HSV-сегментация, морфологические операции
+- **COLMAP** — Structure-from-Motion, восстановление поз камер и sparse point cloud
+- **scikit-image** — Marching Cubes (извлечение iso-surface из воксельного поля)
+- **Open3D** — постобработка меша (сглаживание Таубина), раскраска вершин, визуализация
